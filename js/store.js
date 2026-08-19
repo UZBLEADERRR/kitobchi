@@ -53,6 +53,13 @@
     },
   };
 
+  // AI agentning davom etadigan ish holati: refresh va fon rejimida saqlanadi.
+  const jobs = {
+    get: () => _get('active_job'),
+    set: (job) => _set('active_job', job),
+    clear: () => localStorage.removeItem(PREFIX + 'active_job'),
+  };
+
   // Workspace CRUD (har bir loyiha uchun workspace)
   const workspaces = {
     _key: (projId) => `workspace_${projId}`,
@@ -147,6 +154,7 @@
   window.KitobchiStore = {
     settings,
     projects,
+    jobs,
     workspaces,
     export: exportHelper,
   };
