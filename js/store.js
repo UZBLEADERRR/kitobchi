@@ -9,7 +9,8 @@
   // Yordamchi: localStorage dan maʼlumot olish
   function _get(key) {
     const val = localStorage.getItem(PREFIX + key);
-    return val ? JSON.parse(val) : null;
+    if (!val) return null;
+    try { return JSON.parse(val); } catch (_) { return null; }
   }
 
   // Yordamchi: localStorage ga maʼlumot saqlash

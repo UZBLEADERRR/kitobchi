@@ -110,7 +110,7 @@ body {
 }
 
 .hero {
-  padding: 18px 0 24px;
+  padding: 14px 0 18px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -283,7 +283,7 @@ button {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 40px 16px;
+  padding: 32px 16px;
   background: var(--surface);
   border: 1px dashed var(--surface-border);
   border-radius: var(--radius-md);
