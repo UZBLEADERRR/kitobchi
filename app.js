@@ -5,6 +5,35 @@
   const settingsBtn = document.querySelector('#settingsBtn');
   let route = 'home', active = null, models = [], currentJob = null;
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+  // AI javobini xavfsiz, o‘qiladigan ko‘rinishga aylantiradi. Bu funksiya regex ishlatmaydi.
+  const rich = value => {
+    const lines = String(value ?? '').split('\n');
+    return lines.map(line => {
+      const trimmed = line.trim();
+      if (!trimmed) return '<br>';
+      if (trimmed.startsWith('- ') || trimmed.startsWith('• ')) return `• ${esc(trimmed.slice(2))}`;
+      if (trimmed.startsWith('#')) {
+        let heading = trimmed;
+        while (heading.startsWith('#')) heading = heading.slice(1);
+        return `<strong>${esc(heading.trim())}</strong>`;
+      }
+      let text = esc(trimmed);
+      while (text.includes('**')) text = text.replace('**', '<strong>').replace('**', '</strong>');
+      return text;
+    }).join('<br>');
+  };
+  const parseJson = raw => {
+    let clean = String(raw || '').trim();
+    if (clean.startsWith('```')) clean = clean.slice(clean.indexOf('\n') + 1);
+    if (clean.endsWith('```')) clean = clean.slice(0, -3).trim();
+    try { return JSON.parse(clean); } catch (_) {
+      const starts = ['{', '['].map(x => clean.indexOf(x)).filter(i => i >= 0);
+      const start = starts.length ? Math.min(...starts) : -1;
+      const end = Math.max(clean.lastIndexOf('}'), clean.lastIndexOf(']'));
+      if (start >= 0 && end > start) return JSON.parse(clean.slice(start, end + 1));
+      throw new Error('AI javobi JSON formatida kelmadi. Qayta urinib ko‘ring.');
+    }
+  };
   const toast = s => { const t = document.querySelector('#toast'); if (!t) return; t.textContent = s; t.classList.add('show'); clearTimeout(window.__toast); window.__toast = setTimeout(() => t.classList.remove('show'), 2800); };
   const id = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const saveActive = () => active && KitobchiStore.projects.update(active.id, active);
@@ -35,7 +64,7 @@
   function progressBox() { const j = currentJob; if (!j || j.projectId !== active?.id) return ''; const steps = ['Buyruqni tahlil qilish','Loyiha brifini to‘ldirish','Kontentni yaratish','Dizayn va rasmlarni tayyorlash','Saqlash va yakunlash']; const done = j.step || 0; return `<div class="agent-panel ${j.status}"><div class="agent-head"><span class="agent-orb">✦</span><div><b>AI agentlar ishlayapti</b><small>${esc(j.stage || 'Boshlanmoqda')} · ${j.progress || 0}%</small></div><span class="spinner"></span></div><div class="agent-steps">${steps.map((s,i) => `<div class="agent-step ${i < done ? 'done' : i === done && j.status === 'running' ? 'now' : ''}"><span>${i < done ? '✓' : i + 1}</span>${s}</div>`).join('')}</div>${j.error ? `<p class="error-text">${esc(j.error)}</p>` : ''}</div>`; }
   function workspace() {
     const p = active || {}; const job = currentJob && currentJob.projectId === p.id;
-    screen.innerHTML = `<section class="workspace"><div class="work-title"><div><p class="eyebrow">${esc(p.typeLabel || 'LOYIHA')}</p><h1>${esc(p.title)}</h1></div><button class="more" id="delete">⋮</button></div>${progressBox()}<div class="tabs"><button class="tab active">AI suhbat</button><button class="tab" id="contentTab">Kontent</button><button class="tab" id="exportTab">Eksport</button></div><div id="workBody"><div class="chat" id="chat">${(p.messages || []).map(m => `<div class="bubble ${m.role}">${esc(m.text)}</div>`).join('')}</div><div class="composer"><textarea id="msg" placeholder="Buyruq yoki javob yozing..." ${job && currentJob.status === 'running' ? 'disabled' : ''}></textarea><button class="send" id="send" ${job && currentJob.status === 'running' ? 'disabled' : ''}>↑</button></div></div></section>`;
+    screen.innerHTML = `<section class="workspace"><div class="work-title"><div><p class="eyebrow">${esc(p.typeLabel || 'LOYIHA')}</p><h1>${esc(p.title)}</h1></div><button class="more" id="delete">⋮</button></div>${progressBox()}<div class="tabs"><button class="tab active">AI suhbat</button><button class="tab" id="contentTab">Kontent</button><button class="tab" id="exportTab">Eksport</button></div><div id="workBody"><div class="chat" id="chat">${(p.messages || []).map(m => `<div class="bubble ${m.role}">${rich(m.text)}</div>`).join('')}</div><div class="composer"><textarea id="msg" placeholder="Buyruq yoki javob yozing..." ${job && currentJob.status === 'running' ? 'disabled' : ''}></textarea><button class="send" id="send" ${job && currentJob.status === 'running' ? 'disabled' : ''}>↑</button></div></div></section>`;
     document.querySelector('#send').onclick = send; document.querySelector('#msg').onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }; document.querySelector('#contentTab').onclick = content; document.querySelector('#exportTab').onclick = exportView; document.querySelector('#delete').onclick = () => { if (confirm('Loyihani o‘chirasizmi?')) { KitobchiStore.projects.delete(p.id); clearJob(); route = 'home'; render(); } };
   }
   async function send() {
@@ -45,10 +74,49 @@
     try { setJob({stage:'AI suhbat javobini tayyorlash', progress:35, step:1}); if (!models.length) models = await KitobchiAPI.models(); const chosen = KitobchiStore.settings.get().modelName || models[0]?.name?.replace('models/','') || ''; const history = (active.messages || []).slice(0,-1).map(m => ({role:m.role === 'ai' ? 'model' : 'user', parts:[{text:m.text}]})); const answer = await KitobchiAPI.generateResilient(text, chosen, history, {maxContinuations:5}); active.messages.push({role:'ai', text:answer}); saveActive(); setJob({stage:'Yakunlandi', progress:100, step:5, status:'done'}); setTimeout(clearJob, 1800); render(); } catch (e) { setJob({status:'error', stage:'Qayta urinish kerak', progress:35, error:e.message}); toast('AI javobi saqlab qolindi.'); }
   }
   async function generateContent() {
-    const p=active, isSlides=p.type==='slides'; setJob({id:id(), projectId:p.id, kind:'content', status:'running', stage:'Buyruqni tahlil qilish', progress:8, step:0});
-    try { setJob({stage:'AI kontentni yozmoqda', progress:35, step:2}); if (!models.length) models=await KitobchiAPI.models(); const chosen=KitobchiStore.settings.get().modelName||models[0]?.name?.replace('models/',''); const instruction=isSlides?`Mavzu: ${p.prompt}. Professional taqdimot tuzing. Faqat JSON qaytaring: {"slides":[{"title":"...","text":"...","bullets":["..."],"imagePrompt":"..."}]}. 6-10 ta slayd, o‘zbek tilida.`:`Mavzu: ${p.prompt}. Kitob uchun 6 ta sahifa tuzing. Faqat JSON: {"pages":[{"title":"...","text":"...","imagePrompt":"..."}]}`; const raw=await KitobchiAPI.generateResilient(instruction,chosen,[],{maxContinuations:8}); setJob({stage:'Dizayn va rasmlar prompti', progress:78, step:3}); const clean=raw.replace(/^```(?:json)?/i,'').replace(/```$/,'').trim(); const data=JSON.parse(clean); p.pages=(data.slides||data.pages||[]).map(x=>({...x,text:x.text||x.body||(x.bullets||[]).join(' • ')})); saveActive(); setJob({stage:'Yakunlandi',progress:100,step:5,status:'done'}); toast(`${p.pages.length} ta ${isSlides?'slayd':'sahifa'} tayyorlandi`); setTimeout(clearJob,1800); content(); } catch(e) { setJob({status:'error',stage:'Yaratishda xato',error:e.message}); toast('Ish saqlandi, qayta urinishingiz mumkin.'); content(); }
+    const p = active, isSlides = p.type === 'slides';
+    const old = getJob();
+    const total = old?.projectId === p.id && old.total ? old.total : (isSlides ? 8 : 12);
+    const resumable = old?.projectId === p.id && old.kind === 'content' && ['running','error'].includes(old.status);
+    const startAt = resumable ? (old.nextIndex || 0) : 0;
+    if (!resumable) {
+      p.pages = [];
+      p.storyBible = null;
+      saveActive();
+      setJob({id:id(), projectId:p.id, kind:'content', status:'running', stage:'Buyruqni tahlil qilish', progress:5, step:0, nextIndex:0, total});
+    } else {
+      setJob({status:'running', stage:`${startAt + 1}/${total} bo‘limdan davom etmoqda`, progress:Math.round(18 + (startAt / total) * 72), step:2, nextIndex:startAt, total, error:''});
+    }
+    try {
+      if (!models.length) models = await KitobchiAPI.models();
+      const chosen = KitobchiStore.settings.get().modelName || models[0]?.name?.replace('models/','') || '';
+      if (!p.storyBible) {
+        setJob({stage:'Asosiy reja va mazmun xaritasi tuzilmoqda', progress:12, step:1});
+        const planPrompt = `Loyiha: ${p.prompt}. ${isSlides ? 'Taqdimot' : 'Kitob'} uchun yagona izchil bible tuzing. Faqat JSON qaytaring: {"title":"...","purpose":"...","audience":"...","tone":"...","characters":[],"facts":[],"outline":[{"index":1,"title":"...","goal":"..."}]}. ${total} ta bo‘lim rejasini bering. Keyingi barcha bo‘limlar shu faktlar va uslubga qat’iy amal qiladi.`;
+        p.storyBible = parseJson(await KitobchiAPI.generateResilient(planPrompt, chosen, [], {maxContinuations:10}));
+        saveActive();
+      }
+      p.pages = p.pages || [];
+      for (let i = startAt; i < total; i += 1) {
+        const outline = p.storyBible.outline?.[i] || {index:i+1,title:`${i+1}-bo‘lim`,goal:'Mavzuni davom ettirish'};
+        const previous = p.pages.slice(-2).map(x => `${x.title}: ${x.text}`).join('\\n');
+        const prompt = `Siz izchil kontent agentisiz. Loyiha bible: ${JSON.stringify(p.storyBible)}\\nOldingi bo‘limlar yakuni: ${previous || 'Bu birinchi bo‘lim.'}\\nHozir ${i+1}/${total}-bo‘limni yozing. Rejadagi maqsad: ${outline.goal}. Mazmunni takrorlamang, yangi bo‘limga mantiqan o‘ting, bible faktlarini o‘zgartirmang. ${isSlides ? 'Slayd uchun qisqa, aniq matn va 3-5 bullet.' : 'Kitob sahifasi uchun mazmunli, o‘qilishi ravon matn.'} Faqat JSON qaytaring: {"title":"...","text":"...","bullets":[],"imagePrompt":"..."}`;
+        setJob({stage:`${i+1}/${total} ${isSlides ? 'slayd' : 'sahifa'} yozilmoqda`, progress:Math.round(18 + (i / total) * 72), step:2, nextIndex:i});
+        const item = parseJson(await KitobchiAPI.generateResilient(prompt, chosen, [], {maxContinuations:6}));
+        const page = item.page || item.slide || item;
+        p.pages[i] = {...page, text:page.text || page.body || (page.bullets || []).join(' • '), index:i+1};
+        saveActive();
+        setJob({stage:`${i+1}/${total} saqlandi`, progress:Math.round(18 + ((i+1) / total) * 72), step:3, nextIndex:i+1});
+      }
+      setJob({stage:'Yakunlandi — barcha bo‘limlar tekshirildi', progress:100, step:5, nextIndex:total, total, status:'done'});
+      toast(`${p.pages.length} ta ${isSlides ? 'slayd' : 'sahifa'} tayyorlandi`);
+      setTimeout(clearJob, 2400); content();
+    } catch (e) {
+      setJob({status:'error', stage:'Uzilish: saqlangan joydan davom ettirish mumkin', error:e.message, nextIndex:(getJob()?.nextIndex || startAt), total});
+      toast('Jarayon saqlandi. Qayta bosilsa qolgan joydan davom etadi.'); content();
+    }
   }
-  function content() { const p=active,isSlides=p.type==='slides'; screen.innerHTML=`<section class="page"><p class="eyebrow">${esc(p.typeLabel)}</p><h1>${isSlides?'Slayd studiyasi':'Kontent studiyasi'}</h1><p class="muted">AI mavzu bo‘yicha kontentni tayyorlaydi. Jarayon yuqorida bosqichma-bosqich ko‘rinadi.</p>${progressBox()}<button class="primary wide" id="gen" ${(currentJob?.status==='running')?'disabled':''}>✦ ${isSlides?'AI slaydlarni yaratish':'Kontentni yaratish'}</button>${isSlides?`<button class="secondary wide" id="ppt" ${(p.pages||[]).length?'':'disabled'}>▥ PowerPoint (.ppt) yuklab olish</button>`:''}<div class="content-list"><div class="feature"><span>${isSlides?'▥':'🎨'}</span><b>${isSlides?'PowerPoint taqdimot':'Rangli sahifalar'}</b><small>Har bir bo‘lim alohida dizayn bilan</small></div></div><div id="pages">${(p.pages||[]).map((x,i)=>`<article class="page-card slide-card"><b>${i+1}. ${esc(x.title||'Sahifa')}</b><p>${esc(x.text||'')}</p>${x.imagePrompt?`<small>🖼 ${esc(x.imagePrompt)}</small>`:''}</article>`).join('')}</div></section>`; document.querySelector('#gen').onclick=generateContent; if(isSlides) document.querySelector('#ppt').onclick=()=>KitobchiStore.export.exportPPT(p,'kitobchi-taqdimot.ppt'); }
+  function content() { const p=active,isSlides=p.type==='slides'; screen.innerHTML=`<section class="page"><p class="eyebrow">${esc(p.typeLabel)}</p><h1>${isSlides?'Slayd studiyasi':'Kontent studiyasi'}</h1><p class="muted">AI mavzu bo‘yicha kontentni tayyorlaydi. Jarayon yuqorida bosqichma-bosqich ko‘rinadi.</p>${progressBox()}<button class="primary wide" id="gen" ${(currentJob?.status==='running')?'disabled':''}>✦ ${currentJob?.kind==='content' && ['error','running'].includes(currentJob.status) && (currentJob.nextIndex||0)>0 ? `${currentJob.nextIndex}/${currentJob.total} dan davom ettirish` : (isSlides?'AI slaydlarni yaratish':'Kontentni yaratish')}</button>${isSlides?`<button class="secondary wide" id="ppt" ${(p.pages||[]).length?'':'disabled'}>▥ PowerPoint (.ppt) yuklab olish</button>`:''}<div class="content-list"><div class="feature"><span>${isSlides?'▥':'🎨'}</span><b>${isSlides?'PowerPoint taqdimot':'Rangli sahifalar'}</b><small>Har bir bo‘lim alohida dizayn bilan</small></div></div><div id="pages">${(p.pages||[]).map((x,i)=>`<article class="page-card slide-card"><b>${i+1}. ${esc(x.title||'Sahifa')}</b><p>${rich(x.text||'')}</p>${x.imagePrompt?`<small>🖼 ${esc(x.imagePrompt)}</small>`:''}</article>`).join('')}</div></section>`; document.querySelector('#gen').onclick=generateContent; if(isSlides) document.querySelector('#ppt').onclick=()=>KitobchiStore.export.exportPPT(p,'kitobchi-taqdimot.ppt'); }
   function exportView(){ const p=active; screen.innerHTML=`<section class="page"><p class="eyebrow">TAYYORLASH</p><h1>Yuklab oling yoki yuboring</h1><p class="muted">Loyihangiz telefoningizda saqlangan.</p><div class="export-grid"><button class="export" id="html">HTML kitob<small>Brauzerda ochiladi</small></button><button class="export" id="json">JSON loyiha<small>Zaxira nusxa</small></button><button class="export" id="pdf">Print / PDF<small>PDF sifatida saqlash</small></button><button class="export" id="share">Ulashish<small>Telegram va boshqa ilovalar</small></button></div></section>`; const html=`<html><meta charset="utf-8"><body><h1>${esc(p.title)}</h1>${(p.pages||[]).map(x=>`<h2>${esc(x.title)}</h2><p>${esc(x.text)}</p>`).join('')}</body></html>`; document.querySelector('#html').onclick=()=>KitobchiStore.export.exportHTML(html,'kitobchi.html'); document.querySelector('#json').onclick=()=>KitobchiStore.export.exportJSON(p,'kitobchi.json'); document.querySelector('#pdf').onclick=()=>KitobchiStore.export.exportPDF(html,p.title); document.querySelector('#share').onclick=()=>KitobchiStore.export.shareOrDownload(html,'kitobchi.html'); }
   function settings(){ const s=KitobchiStore.settings.get(); screen.innerHTML=`<section class="page"><p class="eyebrow">SOZLAMALAR</p><h1>Kitobchini sozlang</h1><label class="label">Gemini API kaliti<input id="key" type="password" value="${esc(s.apiKey||'')}" placeholder="AIza..." /></label><p class="hint">Kalit faqat shu telefonda saqlanadi.</p><button class="primary wide" id="save">Saqlash</button><div class="setting-card"><b>Model tanlash</b><p class="muted">Modellar Gemini API’dan avtomatik yuklanadi.</p><select id="modelSelect"><option value="">Avval modellarni yuklang</option></select><button class="secondary" id="refresh">Modellarni yuklash</button><div id="modelStatus"></div></div>${nav('settings')}</section>`; const select=document.querySelector('#modelSelect'); const fill=()=>{select.innerHTML=models.length?models.map(m=>{const n=(m.name||'').replace('models/','');return `<option value="${esc(n)}" ${n===s.modelName?'selected':''}>${esc(m.displayName||n)}</option>`}).join(''):'<option value="">Avval modellarni yuklang</option>';}; if(models.length)fill(); document.querySelector('#save').onclick=()=>{KitobchiStore.settings.set({apiKey:document.querySelector('#key').value.trim(),modelName:select.value});toast('Sozlamalar saqlandi');}; document.querySelector('#refresh').onclick=async()=>{const b=document.querySelector('#refresh');b.disabled=true;try{models=await KitobchiAPI.models();fill();document.querySelector('#modelStatus').textContent=`${models.length} ta model topildi.`;}catch(e){document.querySelector('#modelStatus').textContent=e.message;}finally{b.disabled=false;}}; bindNav(); }
   async function resumeJob(){ const job=getJob(); if(!job || job.status!=='running') return; active=KitobchiStore.projects.get(job.projectId); if(!active) return clearJob(); route='workspace'; render(); if(job.kind==='content') { await generateContent(); return; } if(job.kind==='chat') { const input=job.prompt; try { if(!models.length) models=await KitobchiAPI.models(); const chosen=KitobchiStore.settings.get().modelName||models[0]?.name?.replace('models/','')||''; const answer=await KitobchiAPI.generateResilient(input,chosen,(job.baseMessages||[]).map(m=>({role:m.role==='ai'?'model':'user',parts:[{text:m.text}]})),{maxContinuations:8}); active.messages.push({role:'ai',text:answer}); saveActive(); setJob({status:'done',stage:'Yakunlandi',progress:100,step:5}); setTimeout(clearJob,1800); render(); } catch(e){setJob({status:'error',stage:'Qayta urinib ko‘ring',error:e.message});} } }

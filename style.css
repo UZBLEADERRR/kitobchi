@@ -475,7 +475,8 @@ textarea:focus, input:focus {
 }
 
 .bubble {
-  max-width: 86%;
+  max-width: 92%;
+  overflow-wrap: anywhere;
   padding: 14px 16px;
   border-radius: var(--radius-md);
   font-size: 15px;
@@ -566,7 +567,11 @@ textarea:focus, input:focus {
 .page-card p {
   font-size: 15px;
   color: var(--text-muted);
+  overflow-wrap: anywhere;
 }
+.bubble strong { color: #fbbf24; font-weight: 800; }
+.bubble ul { margin: 8px 0 0 18px; padding: 0; }
+.bubble code { color: #fde68a; background: #0b0d13; padding: 2px 5px; border-radius: 4px; }
 
 .export-grid {
   display: grid;
